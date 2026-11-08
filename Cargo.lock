@@ -406,7 +406,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_with",
- "sha1",
  "sha2",
  "slab",
  "tokio",
