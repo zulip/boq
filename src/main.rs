@@ -11,6 +11,7 @@ mod handlers;
 mod narrow;
 mod notice;
 mod notification_data;
+mod notification_sender;
 mod queues;
 mod rabbitmq;
 mod response;
@@ -27,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use crate::app_server::AppServer;
 use crate::app_state::AppState;
 use crate::avatar::AvatarSettings;
+use crate::notification_sender::{NotificationSender, run_publisher};
 use crate::queues::Queues;
 use crate::rabbitmq::RabbitMQ;
 use crate::secrets::Secrets;
@@ -87,6 +89,19 @@ async fn main() -> Result<()> {
     .await
     .with_context(|| "failed to connect to RabbitMQ")?;
 
+    let (notification_sender, rx) = NotificationSender::new();
+    let publisher_channel = rabbitmq.channel.clone();
+    // Not joined with the rabbitmq and server tasks below. The publisher only
+    // returns once every NotificationSender is dropped, which doesn't happen
+    // before exit.
+    //
+    // A publish failure means the RabbitMQ channel is gone, so we shut down.
+    tokio::spawn(shutdown_tx.on_error(async move {
+        run_publisher(publisher_channel, rx)
+            .await
+            .inspect_err(|error| tracing::error!("notification publisher failed: {error:#}"))
+    }));
+
     let state = Arc::new(AppState {
         shared_secret,
         secret_key,
@@ -98,7 +113,7 @@ async fn main() -> Result<()> {
         shutdown_rx,
         db_pool,
         queues: Mutex::new(Queues::new()),
-        rabbitmq_channel: rabbitmq.channel.clone(),
+        notification_sender,
     });
 
     let server = AppServer::new(&args.address, Arc::clone(&state))

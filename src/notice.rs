@@ -1,6 +1,4 @@
 use anyhow::Result;
-use lapin::BasicProperties;
-use lapin::options::BasicPublishOptions;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -12,6 +10,7 @@ use serde_json::value::RawValue;
 use crate::app_state::AppState;
 use crate::avatar::{AvatarSettings, AvatarSource, get_avatar_field};
 use crate::notification_data::{NotificationTrigger, UserIdSets, UserMessageNotificationsData};
+use crate::notification_sender::Notification;
 use crate::queues::{Client, QueueId, Queues};
 use crate::types::{MessageFlags, MessageId, RealmId, UserGroupId, UserId};
 
@@ -277,7 +276,7 @@ struct Notified {
 }
 
 #[derive(Debug, Serialize)]
-struct OfflineNotice {
+pub struct OfflineNotice {
     user_profile_id: UserId,
     message_id: MessageId,
     trigger: NotificationTrigger,
@@ -286,7 +285,7 @@ struct OfflineNotice {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
-enum OfflinePushNotice {
+pub enum OfflinePushNotice {
     Add(OfflineNotice),
 
     #[allow(dead_code)]
@@ -319,20 +318,9 @@ fn maybe_enqueue_notifications(
             trigger,
             mentioned_user_group_id,
         });
-        let payload = serde_json::to_vec(&notice)?;
-        let state = Arc::clone(state);
-        tokio::spawn(async move {
-            state
-                .rabbitmq_channel
-                .basic_publish(
-                    "".into(),
-                    "missedmessage_mobile_notifications".into(),
-                    BasicPublishOptions::default(),
-                    &payload,
-                    BasicProperties::default().with_delivery_mode(2),
-                )
-                .await
-        });
+        state
+            .notification_sender
+            .send(Notification::MobilePush(notice));
         notified.push_notified = true;
     }
 
@@ -349,20 +337,7 @@ fn maybe_enqueue_notifications(
             trigger,
             mentioned_user_group_id,
         };
-        let payload = serde_json::to_vec(&notice)?;
-        let state = Arc::clone(state);
-        tokio::spawn(async move {
-            state
-                .rabbitmq_channel
-                .basic_publish(
-                    "".into(),
-                    "missedmessage_emails".into(),
-                    BasicPublishOptions::default(),
-                    &payload,
-                    BasicProperties::default().with_delivery_mode(2),
-                )
-                .await
-        });
+        state.notification_sender.send(Notification::Email(notice));
         notified.email_notified = true;
     }
 
