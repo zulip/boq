@@ -126,8 +126,7 @@ impl RabbitMQ {
             tokio::select! {
                 delivery = self.consumer.next() => {
                     let Some(delivery) = delivery else {
-                        tracing::warn!("RabbitMQ connection closed");
-                        break;
+                        anyhow::bail!("RabbitMQ consumer was canceled");
                     };
                     self.handle_delivery(&state, delivery?).await?;
                 }
